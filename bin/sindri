@@ -1,0 +1,394 @@
+#!/usr/bin/env node
+
+// Load dependencies
+var program = require('commander'),
+    globule = require('globule'),
+    colors = require('colors'),
+    async = require('async'),
+    util = require('util'),
+    path = require('path'),
+    fs = require('fs'),
+    _ = require('lodash'),
+    validUrl = require('valid-url'),
+    beautify = require('js-beautify').js_beautify,
+    argv = require('minimist')(process.argv.slice(2)),
+    pkg = require('../package.json'),
+    deep = require('deep-get-set'),
+    traverse = require('traverse'),
+    dns = require('dns'),
+    os = require('os'),
+    desc = pkg.description,
+    version = pkg.version;
+
+var __TEMPLATE_EXT__ = ".template.json",
+    __VARS_EXT__ = ".vars.json",
+    __CURR_EXT__ = ".json",
+    __CONFIG_BASE_DIR__ = __dirname + '/../../../configurations/';
+
+
+
+// CLI
+program
+  .version(version)
+  .description(desc);
+  //.parse(process.argv); // We want to generically parse options
+
+// Error Handling
+process.on('uncaughtException', function(err){
+  // The following stringify doesn't work
+  if (typeof err === 'object'){
+    var stringified_err = JSON.stringify(err);
+    if(stringified_err != "{}"){
+        err = stringified_err;
+    }
+  }
+  console.log('Error: '.grey + (err+"").red);
+  process.exit(1);
+});
+
+
+// Entry point constructor
+var Sindri = function(){
+  var self = this;
+  // check if a configdir is provided through 
+  if(argv.basedir){
+    this.configDir = path.resolve(argv.basedir);
+  } else {
+    this.configDir = path.resolve(__CONFIG_BASE_DIR__);
+  }
+
+  // If user passes in 1 or more configs, do not prompt user by settings this.ignorePrompt = true
+  this.ignorePrompt = false;
+  for(var arg in argv){
+    // Do not count basedir
+    if(arg == "basedir") continue;
+    // Do not count _
+    if(arg == "_") continue;
+    // Do not count ignoreprevious
+    if(arg == "ignoreprevious") continue;
+    this.ignorePrompt = true;
+  }
+
+  this.configTemplates = globule.find('*'+__TEMPLATE_EXT__, { srcBase: this.configDir });
+  this.configurations = [];
+  this.configuration = {};
+
+
+  
+  // loop through installed projects, read in the json and build up array of available projects// Local variables
+  _.each(this.configTemplates, function(template){
+    var templateName = template.replace(__TEMPLATE_EXT__, ''), 
+        templatePath = this.configDir + '/' + templateName + __TEMPLATE_EXT__,
+        templateFile = fs.readFileSync(templatePath),
+        templateJson = JSON.parse(templateFile),
+        varsPath = this.configDir + '/' + templateName + __VARS_EXT__,
+        varsFile = (fs.existsSync(varsPath)) ? fs.readFileSync(varsPath) : null,
+        varsJson = (varsFile) ? JSON.parse(varsFile) : null,
+        currPath = this.configDir +'/'+ templateName + __CURR_EXT__,
+        currFile = (fs.existsSync(currPath)) ? fs.readFileSync(currPath) : null,
+        currJson = (currFile && currFile.length > 0) ? JSON.parse(currFile) : null;
+      
+    // Validate matching vars exists
+    if(!varsJson){
+      throw new Error("Expected matching vars.json at \"" + varsPath + "\".")
+    }
+
+    this.configurations.push({ 
+      name: templateName,
+      templateJson: templateJson,
+      templatePath: templatePath,
+      currJson: currJson,
+      currPath: currPath,
+      varsJson:varsJson,
+      varsPath:varsPath
+    });
+
+
+  }.bind(this));
+
+  // Attempt to resolve host
+  self.resolvedHost = null;
+  dns.lookup(os.hostname(), function (err, addresses) {
+    if(!err){
+      self.resolvedHost = os.hostname();   
+    } else {
+      self.resolvedHost = false;
+    }
+    self.start();
+  });
+
+  
+};
+
+
+/**
+ * start() 
+ * display artwork and welcome prompt
+ */
+
+
+Sindri.prototype.start = function(){
+
+  // Trap scope
+  var self = this,
+      file = __dirname + '/ascii.txt',
+      art = '';
+
+  fs.readFile(file, 'utf8', function(err, art){
+    if (err) throw err;
+    console.log(art.green);
+    
+     // Log Sinidiri package description
+    console.log(desc.yellow);
+
+    // If verbose option set, log additional information
+    if (argv.verbose){
+      console.log('Version: %s'.yellow, version);
+      console.log('Output: Verbose'.yellow);
+    }
+
+    // Output message
+    console.log('\nWelcome back, mortal.\nPlease edit the runtime settings of your application.'.green);
+    
+    // Read Configurations (currently only supports 1 configuration)
+    self.read_configurations();
+  });
+ 
+};
+
+
+
+/**
+ * read_configurations() 
+ * Read configuration files and decide which one to use.
+ */
+
+Sindri.prototype.read_configurations = function(){
+
+ 
+
+  // if there are no projects, throw an error
+  if (this.configurations.length === 0){
+    throw new Error("No valid configuration templates found in \"" + this.configDir + "\"");
+  }
+
+  // If there is 1 valid configuration, use it.
+  if(this.configurations.length === 1) {
+    this.configuration = this.configurations[0];
+    this.process_config();
+  } else {
+    // TODO: write support for this
+    this.choose_configuration();
+  }
+
+};
+
+
+/**
+ * choose_configuration() 
+ * Prompt user to select one of the available project templates
+ * TODO: write support for this
+ */
+
+Sindri.prototype.choose_configuration = function(){
+  var configurations = this.configurations.map(function(p){
+        return util.format('%s', p.name);
+      });
+
+  console.log('  Choose a configuration:')
+  program.choose(configurations, 0, function(choice){
+    this.configuration = this.configurations[choice];
+    console.log('');
+    this.set_sso();
+  }.bind(this));
+};
+
+Sindri.prototype.transform_localhost = function(val){
+    if(this.resolvedHost && /localhost/.test(val)){
+        val = val.replace("localhost", this.resolvedHost);
+    }
+    if(this.resolvedHost && /127.0.0.1/.test(val)){
+        val = val.replace("127.0.0.1", this.resolvedHost);
+    }
+    return val;
+}
+
+
+Sindri.prototype.standardize_value = function(val){
+
+    // ensure lowercase
+    val = (val+"").toLowerCase();
+
+    // convert truthy to bool
+    if(val === "y" || val === "yes" || val === "true"){
+      val = true;
+    }
+    if(val === "n" || val === "no" || val === "false"){
+      val = false;
+    }
+
+    val = this.transform_localhost(val);
+
+    /* TODO: Url validation
+    if (check option['key'] has url or uri in it AND validUrl.isUri(val)) {
+      throw new Error('\n' + url + ' is an invalid URL. Try again.\n'.red);
+    } 
+    */
+
+    return val;
+}
+
+/**
+ * apply_commandline()
+ * Recursively deep apply props from commandline to config if they already exist.
+ */
+Sindri.prototype.apply_commandline = function(accessor_arr, cmdargs, config){
+
+  var self = this,
+      accessor = accessor_arr.join("."),
+      key, value, new_accessor_arr;
+  
+  if(cmdargs){
+    // If object, perform recursion
+    if(Object.prototype.toString.call(cmdargs) === "[object Object]"){
+      for(key in cmdargs){
+        value = cmdargs[key];
+        new_accessor_arr = accessor_arr.concat(key);
+        config = self.apply_commandline(new_accessor_arr, value, config);
+      };
+      return config;
+    }
+    // Else, check to see if prop exists and set value
+    if(deep(config, accessor) != undefined){
+      deep(config, accessor, cmdargs);
+      console.log("Setting \"" + accessor + "\" = \"" + cmdargs + "\"");
+    } else {
+      console.log("\"" + accessor + "\" is not a valid for configuration for \"" + self.configuration.name + "\", skipping");
+    }
+  }
+  return config;
+}
+
+/**
+ * process_config() 
+ * Process configs and either prompt user or use if given through command line
+ */
+Sindri.prototype.process_config = function(){
+
+
+
+  var self = this,
+    templateJson = this.configuration.templateJson,
+    newConfigJson = this.configuration.currJson || this.configuration.templateJson,
+    filtered_argv = {},
+    optionKey;
+
+  // If ignoreprevious flag is set, ignore the previously generated configuration when generating this one.
+  if(argv.ignoreprevious){
+    newConfigJson = this.configuration.templateJson;
+  }
+
+  // First filter out special cmd line values
+  for(var i in argv){
+    if(i === "_" || i === "basedir"){
+      continue;
+    } else {
+      filtered_argv[i] = argv[i];
+    }
+  }
+  // Process command line values
+  newConfigJson = self.apply_commandline([], filtered_argv, newConfigJson);
+
+  // Iterate through vars and apply them to config
+  if(this.ignorePrompt !== true){
+    async.eachSeries(this.configuration.varsJson, function(option, next){
+      optionKey = option['key'];
+      // Check command line for existing option
+      var commandLineValue = deep(argv, optionKey);
+      if(commandLineValue){
+          // Already processed this value above, just skip user interaction
+          next();
+      } else {
+          // If not, prompt user for it
+          var currentValue = self.standardize_value(deep(newConfigJson, option['key'])),
+              promptMsg = '  ' + option.description + ' (' + currentValue + '): ';
+          program.prompt(promptMsg, function(userinput){
+
+            // if nothing given, use current value
+            if(userinput == ""){
+              userinput = currentValue;
+            }
+
+            // Cast value to standard
+            userinput = self.standardize_value(userinput);
+
+            // set value on config
+            deep(newConfigJson, option['key'], userinput);
+            next();
+        });
+      }
+
+    },function(err){
+      if(err) throw err;
+      newConfigJson = self.transformReferenceValues(newConfigJson, templateJson);
+      self.finish(newConfigJson);
+    });
+  } else {
+    newConfigJson = self.transformReferenceValues(newConfigJson, templateJson);
+    self.finish(newConfigJson);
+  }
+};
+
+
+/**
+ *  Transform values in config that have {{}} references to other places in config
+ */
+var __REF_REGEX_MATCH_STR__ = /\{\{(.*)\}\}/
+
+Sindri.prototype.transformReferenceValues = function(json, templateJson){
+  traverse(templateJson).forEach(function(value){
+    if(typeof value === "string"){
+      // Check for {{}} reference and update value if found
+      var referenceKey = value.match(__REF_REGEX_MATCH_STR__);
+      if(referenceKey){
+          var referenceValue = deep(json, referenceKey[1]),
+              newValue = value.replace(__REF_REGEX_MATCH_STR__, referenceValue);
+
+          console.log("Transformed key \""+this.key+"\" (\"" + value + "\" -> \"" + newValue + "\")");
+          deep(json, this.path.join("."), newValue);
+      }      
+    }
+  });
+  return json;
+}
+
+/**
+ * finish() display success message and give some instructions on next steps.
+ *
+ */
+
+Sindri.prototype.finish = function(json){
+
+  var self = this,
+      content = beautify(JSON.stringify(json), { indent_size: 4 });
+  
+  fs.writeFile(this.configuration.currPath, content, function(err) {
+      if(err) {
+          console.log(err);
+      } else {
+          console.log('\nWell done. You\'ve marched to the top of the mountain and altered your project.'.green);
+          //console.log('\nUsing SSO: '.grey + sso.cyan);
+          //console.log('WebAPI URL: '.grey + url.cyan);
+          //console.log('Using Mock Data: '.grey + mock.cyan);
+
+      }
+      process.exit(0);
+  }); 
+
+};
+
+
+var sindri = new Sindri();
+
+
+
