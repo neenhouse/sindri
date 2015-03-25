@@ -1,8 +1,7 @@
 {
   "name": "sindri",
   "description": "Sindri: A utility to configure runtime settings of a NodeJS project through the command line.",
-  "version": "1.1.2",
-  "private": true,
+  "version": "1.0.0",
   "bin": {
     "sindri": "./bin/sindri"
   },
@@ -19,6 +18,5 @@
     "traverse": "^0.6.6",
     "valid-url": "1.0.9"
   },
-  "readme": "# Sindri\n\nA utility to configure runtime settings of a NodeJS project through the command line. Please fork and configure to your own Mjölnir project.\n\n\n## Resources\n\n * [Sindri on CNPR][cnpr]\n * [Sindri in Stash][stash]\n\n[cnpr]: http://crt-dev-linux.devid.local:9009/module/sindri-cdau\n[stash]: https://repo.advisory.com/projects/CNM/repos/sindri-cdau/\n\n\n## Installation\n\nInstall sindri as a global Node module:\n\n    $ cnpr install -g sindri-cdau\n\n*Note: You may need to use 'sudo' if you do not have admin privleges.*\n\nYou also install it locally to an individual project and create a script that will access /node_modules/sindri-cdau/bin/sindri directly. This is the default practice in CDAU.\n\n\n## Usage\n\nRun the CLI to the configuration of a CDAU Mjölnir project and enter the appropriate information when prompted.\n\n    $ sindri\n\n\n## Dependencies\n\nSindri is written to be used on a CDAU Mjölnir project. Please feel free to fork the repo and make a version for your product.\n",
-  "readmeFilename": "README.md",
+  "readmeFilename": "README.md"
 }
