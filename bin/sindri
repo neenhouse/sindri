@@ -177,7 +177,6 @@ Sindri.prototype.read_configurations = function(){
     this.configuration = this.configurations[0];
     this.process_config();
   } else {
-    // TODO: write support for this
     this.choose_configuration();
   }
 
@@ -198,8 +197,7 @@ Sindri.prototype.choose_configuration = function(){
   console.log('  Choose a configuration:')
   program.choose(configurations, 0, function(choice){
     this.configuration = this.configurations[choice];
-    console.log('');
-    this.set_sso();
+    this.process_config();
   }.bind(this));
 };
 

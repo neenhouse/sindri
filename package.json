@@ -1,7 +1,7 @@
 {
   "name": "sindri",
   "description": "Sindri: A utility to configure runtime settings of a NodeJS project through the command line.",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "bin": {
     "sindri": "./bin/sindri"
   },
